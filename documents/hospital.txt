@@ -1,0 +1,12 @@
+The hospital name is "Jaiiii Surya Medical Center".
+The hospital address is "Jaiiii Surya Medical Center, 123 Main Street, Anytown, USA".
+The hospital phone number is "123-456-7890".
+The hospital email is "info@jaiiii-surya-medical-center.com".
+The hospital website is "https://jaiiii-surya-medical-center.com".
+The hospital logo is "https://jaiiii-surya-medical-center.com/logo.png".
+The hospital colors are "#000000" and "#FFFFFF".
+The hospital fonts are "Arial" and "Helvetica".
+The hospital font sizes are "12px" and "14px".
+The hospital font weights are "normal" and "bold".
+The hospital font styles are "normal" and "italic".
+The hospital font variants are "normal" and "small-caps".

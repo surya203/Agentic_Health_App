@@ -1,0 +1,15 @@
+APPROVAL_STATUS: sample-not-clinically-approved
+DOCUMENT_VERSION: 1.0
+
+SAMPLE ENGINEERING DOCUMENT
+This file is synthetic prototype content. It is not a hospital-approved document and it is not for clinical use.
+
+Warning signs to discuss with a clinician
+
+Some changes should be discussed with a qualified clinician, especially if they are new, persistent, or unexplained. Examples used in this sample include a new lump, a sore that does not heal, persistent hoarseness, unexplained weight loss, and unusual bleeding. This sample does not say that any of these changes is cancer.
+
+A warning sign is a reason to seek a clinical evaluation. It is not a diagnosis. Many non-cancer conditions can cause the same changes. Only a clinician who can examine the person and order appropriate tests can interpret them.
+
+What this sample does not do
+
+This sample does not prove cancer, rule cancer out, or recommend treatment, medication, or tests for a specific person. People with a personal health concern should speak with a qualified clinician. If a change is sudden or severe, seek urgent in-person care rather than rely on this prototype.
