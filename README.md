@@ -33,9 +33,22 @@ Create a `.env` file in this folder. Get a key from the [Groq console](https://c
 ```text
 GROQ_API_KEY=your_groq_api_key
 GROQ_MODEL=openai/gpt-oss-120b
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_KEY=your_supabase_key
 ```
 
 `GROQ_MODEL` can be changed to another chat model enabled on the account. The app reads `Groq_api_key` if `GROQ_API_KEY` is unset. The key is loaded from `.env` and is not written into source or logs.
+
+## Supabase
+
+The app stores two kinds of values:
+
+- One hospital profile row (name, address, phone, email, website, logo, colors, and fonts from `documents/hospital.txt`).
+- Each chat question and answer.
+
+In the Supabase dashboard, open the SQL editor and run [sql/schema.sql](sql/schema.sql). Restart the app after the URL and key are in `.env`. The first successful launch inserts the hospital profile when that table is empty, then saves new chat turns and reloads the latest 50 messages.
+
+Use the service-role key or the anon key. The SQL file adds prototype policies so the anon key can read and insert. Those policies are open; do not use them for real patient information. Keep the key in `.env` only.
 
 ## Run
 
