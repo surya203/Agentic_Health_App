@@ -1,4 +1,4 @@
-"""Retrieve sample passages and answer only when safety and evidence checks pass."""
+"""Retrieve local documents first, then search the web or answer generally."""
 
 from __future__ import annotations
 
@@ -29,8 +29,7 @@ URGENT_MESSAGE = (
     "This tool cannot assess emergencies."
 )
 SCOPE_MESSAGE = (
-    "I can't diagnose cancer, rule it out, or recommend treatment. "
-    "This assistant only shares general educational information from the loaded documents. "
+    "I can't diagnose cancer, rule it out, or recommend a personal treatment. "
     "Please talk with a qualified clinician about personal health concerns."
 )
 EVIDENCE_MESSAGE = "I couldn't verify an answer from the approved documents."
@@ -44,6 +43,22 @@ INDEX_MESSAGE = (
 )
 EMPTY_MESSAGE = "Enter an educational question to search the loaded documents."
 
+# Database column keys, with phrases a person might use for each one.
+PROFILE_FIELDS = (
+    ("name", "Hospital name", "The name of the hospital.", ("hospital name", "name")),
+    ("address", "Address", "The street address of the hospital.", ("address", "location")),
+    ("phone", "Phone number", "The phone number used to call the hospital.", ("phone number", "phone", "telephone")),
+    ("email", "Email", "The email address for the hospital.", ("email", "e-mail")),
+    ("website", "Website", "The hospital website address.", ("website", "web address")),
+    ("logo_url", "Logo", "The web address of the hospital logo.", ("logo url", "logo")),
+    ("colors", "Colors", "The hospital brand colors.", ("colors", "color", "colours", "colour")),
+    ("fonts", "Fonts", "The typefaces used by the hospital.", ("fonts", "font", "typeface")),
+    ("font_sizes", "Font sizes", "The text sizes used by the hospital.", ("font sizes", "font size", "text size")),
+    ("font_weights", "Font weights", "How thick the hospital text is, such as normal or bold.", ("font weights", "font weight")),
+    ("font_styles", "Font styles", "The text style, such as normal or italic.", ("font styles", "font style")),
+    ("font_variants", "Font variants", "Extra text variants, such as small caps.", ("font variants", "font variant", "small caps", "small-caps")),
+)
+
 SYSTEM_PROMPT = (
     "You are a cancer-awareness education assistant. "
     "Answer only from the supplied document context. "
@@ -55,6 +70,18 @@ SYSTEM_PROMPT = (
     "Sources: filename (page N); filename (page N). "
     "Copy filenames and pages only from the citation labels in the context. "
     "If a citation label says page n/a, write page n/a."
+)
+
+FALLBACK_PROMPT = (
+    "You are a cancer-awareness education assistant. "
+    "The hospital document files do not contain an answer to this question. "
+    "Use browser search when the question needs current or outside information. "
+    "If a web search is not needed, answer from general knowledge. "
+    "Always give a useful educational answer. "
+    "Do not diagnose a person, rule cancer out for a person, or give a personal treatment plan or dose. "
+    "Begin with this sentence: This answer is not from the hospital documents. "
+    "When you use web pages, end with a Sources section that lists each page title and URL. "
+    "When you do not use the web, end with: Sources: general knowledge, not the hospital documents."
 )
 
 URGENT_PATTERNS = [
@@ -81,10 +108,7 @@ SCOPE_PATTERNS = [
     r"\brule (?:cancer|it) out\b",
     r"\brule out cancer\b",
     r"\b(?:cancer|tumor|tumour) (?:diagnosis|stage|staging)\b",
-    r"\bwhat (?:treatment|medicine|medication|drug)s?\b",
     r"\b(?:recommend|start|prescribe)(?: a)? (?:treatment|chemo(?:therapy)?|medication|medicine)\b",
-    r"\bchemotherapy\b",
-    r"\bradiation therapy\b",
     r"\bdosage\b",
     r"\bshould i take\b",
 ]
@@ -101,11 +125,16 @@ STOPWORDS = frozenset(
         "here", "please", "tell", "explain", "sample", "document", "documents",
     }
 )
+# Filenames may contain spaces and parentheses, as in "Artificial Intelligence.pdf".
+FILENAME_RE = (
+    r"[A-Za-z0-9][A-Za-z0-9_\-]*(?:[ ()][A-Za-z0-9][A-Za-z0-9_\-]*)*"
+    r"\.(?:txt|docx|pdf)"
+)
 CITATION_RE = re.compile(
-    r"([A-Za-z0-9_\-]+\.(?:txt|docx|pdf))\s*\(page\s*(n/a|\d+)\)",
+    rf"({FILENAME_RE})\s*\(page\s*(n/a|\d+)\)",
     re.IGNORECASE,
 )
-FILE_RE = re.compile(r"[A-Za-z0-9_\-]+\.(?:txt|docx|pdf)", re.IGNORECASE)
+FILE_RE = re.compile(FILENAME_RE, re.IGNORECASE)
 INSUFFICIENT_PHRASES = (
     "insufficient_evidence",
     "not enough evidence",
@@ -241,11 +270,45 @@ def _complete(client: OpenAI, model: str, question: str, context: str, temperatu
     )
 
 
-def generate_from_evidence(question: str, context: str) -> str:
+def _fallback_complete(
+    client: OpenAI,
+    model: str,
+    question: str,
+    temperature: float,
+    use_search: bool,
+):
+    request = {
+        "model": model,
+        "temperature": temperature,
+        "max_tokens": 1500,
+        "messages": [
+            {"role": "system", "content": FALLBACK_PROMPT},
+            {"role": "user", "content": question},
+        ],
+    }
+    if use_search:
+        request["tools"] = [{"type": "browser_search"}]
+        request["tool_choice"] = "auto"
+    return client.chat.completions.create(**request)
+
+
+def _message_text(response) -> str:
+    message = response.choices[0].message
+    return (message.content or "").strip()
+
+
+def _groq_client() -> tuple[OpenAI | None, str]:
     api_key, model = load_settings()
     if not api_key:
+        return None, model
+    client = OpenAI(api_key=api_key, base_url=GROQ_BASE_URL, timeout=60.0, max_retries=0)
+    return client, model
+
+
+def generate_from_evidence(question: str, context: str) -> str:
+    client, model = _groq_client()
+    if client is None:
         return TECHNICAL_MESSAGE
-    client = OpenAI(api_key=api_key, base_url=GROQ_BASE_URL, timeout=45.0, max_retries=0)
     try:
         try:
             response = _complete(client, model, question, context, 0.1)
@@ -253,14 +316,52 @@ def generate_from_evidence(question: str, context: str) -> str:
             if "temperature" not in str(exc).lower():
                 raise
             response = _complete(client, model, question, context, 1)
+        return _message_text(response)
     except Exception:
         return TECHNICAL_MESSAGE
-    try:
-        message = response.choices[0].message
-        text = (message.content or "").strip()
-    except Exception:
+
+
+def present_outside_answer(text: str) -> str:
+    cleaned = re.sub(r"【[^】]*】", "", text).strip()
+    if "not from the hospital documents" not in cleaned.lower():
+        cleaned = "This answer is not from the hospital documents.\n\n" + cleaned
+    if re.search(r"https?://", cleaned, re.IGNORECASE):
+        cleaned = re.sub(
+            r"(?im)^sources:\s*general knowledge, not the hospital documents\.?\s*$",
+            "",
+            cleaned,
+        ).strip()
+    return cleaned
+
+
+def generate_outside_documents(question: str) -> str:
+    """Answer when the files have no supporting passage. Search the web only if needed."""
+    client, model = _groq_client()
+    if client is None:
         return TECHNICAL_MESSAGE
-    return text
+    attempts = (
+        (True, 0.2),
+        (True, 1),
+        (False, 0.2),
+    )
+    last_error = ""
+    for use_search, temperature in attempts:
+        try:
+            response = _fallback_complete(client, model, question, temperature, use_search)
+            text = _message_text(response)
+            if not text:
+                continue
+            return present_outside_answer(text)
+        except Exception as exc:
+            last_error = str(exc).lower()
+            if (
+                use_search
+                and "temperature" not in last_error
+                and "tool" not in last_error
+                and "browser" not in last_error
+            ):
+                break
+    return TECHNICAL_MESSAGE
 
 
 def _allowed_sources(passages: list[dict]) -> set[tuple[str, int]]:
@@ -320,12 +421,18 @@ def validate_answer(answer: str, passages: list[dict], context: str) -> str | No
         return None
     allowed = _allowed_sources(passages)
     allowed_names = {source for source, _page in allowed}
-    mentioned = {match.group(0).lower() for match in FILE_RE.finditer(cleaned)}
+    mentioned = set()
+    for match in FILE_RE.finditer(cleaned):
+        found = match.group(0).lower()
+        hits = [name for name in allowed_names if found == name or found.endswith(name)]
+        mentioned.add(hits[0] if len(hits) == 1 else found)
     if not mentioned <= allowed_names:
         return None
-    citations = [
-        (name.lower(), _parse_page(page)) for name, page in CITATION_RE.findall(cleaned)
-    ]
+    citations = []
+    for name, page in CITATION_RE.findall(cleaned):
+        found = name.lower()
+        hits = [source for source in allowed_names if found == source or found.endswith(source)]
+        citations.append((hits[0] if len(hits) == 1 else found, _parse_page(page)))
     if any(citation not in allowed for citation in citations):
         return None
     if not claims_supported(cleaned, context):
@@ -340,6 +447,79 @@ def validate_answer(answer: str, passages: list[dict], context: str) -> str | No
     return tidy_sources(cleaned + "\n\nSources: " + "; ".join(labels))
 
 
+def _format_field_value(value) -> str:
+    if isinstance(value, (list, tuple)):
+        return ", ".join(str(item) for item in value)
+    if value is None:
+        return "not set"
+    return str(value)
+
+
+def current_hospital_profile() -> dict:
+    """Prefer the live Supabase row, then the local profile values."""
+    try:
+        from supabase_store import HOSPITAL_PROFILE, configured, load_hospital_profile
+
+        if configured():
+            return load_hospital_profile()
+        return dict(HOSPITAL_PROFILE)
+    except Exception:
+        from supabase_store import HOSPITAL_PROFILE
+
+        return dict(HOSPITAL_PROFILE)
+
+
+def matching_profile_fields(question: str) -> list[tuple]:
+    """Map a question onto hospital profile keys by meaning, not exact file text."""
+    lowered = question.lower()
+    matched = []
+    for field in PROFILE_FIELDS:
+        aliases = sorted(field[3], key=len, reverse=True)
+        for alias in aliases:
+            if alias == "name" and "hospital" not in lowered and "key" not in lowered:
+                continue
+            if re.search(rf"\b{re.escape(alias)}\b", lowered):
+                matched.append(field)
+                break
+    if matched:
+        return matched
+    asks_about_keys = re.search(r"\b(keys?|fields?|columns?)\b", lowered) and re.search(
+        r"\b(mean|meaning|explain|list|what|define|definition|describe|show)\b",
+        lowered,
+    )
+    if asks_about_keys:
+        return list(PROFILE_FIELDS)
+    return []
+
+
+def answer_from_profile(question: str) -> str | None:
+    fields = matching_profile_fields(question)
+    if not fields:
+        return None
+    profile = current_hospital_profile()
+    lines = ["From the hospital profile stored in the database:"]
+    for key, label, meaning, _aliases in fields:
+        value = _format_field_value(profile.get(key))
+        lines.append(f"{label} ({key}): {value}. {meaning}")
+    lines.append("")
+    lines.append("Sources: Supabase hospital_profile")
+    return "\n".join(lines)
+
+
+def answer_from_passages(passages: list[dict]) -> str:
+    chunks = []
+    labels = []
+    for passage in passages[:3]:
+        text = (passage.get("text") or "").strip()
+        if text:
+            chunks.append(text)
+        label = citation_label(passage.get("metadata") or {})
+        if label not in labels:
+            labels.append(label)
+    body = "\n\n".join(chunks)
+    return "From the hospital documents:\n\n" + body + "\n\nSources: " + "; ".join(labels)
+
+
 def answer_question(question: str) -> str:
     text = (question or "").strip()
     if not text:
@@ -348,23 +528,25 @@ def answer_question(question: str) -> str:
         return URGENT_MESSAGE
     if _matches(text, SCOPE_PATTERNS):
         return SCOPE_MESSAGE
+    profile_answer = answer_from_profile(text)
+    if profile_answer:
+        return profile_answer
     try:
         passages = retrieve(text)
     except Exception:
-        return INDEX_MESSAGE
+        passages = []
     supported = [
         passage
         for passage in passages
         if passage["similarity"] >= SIMILARITY_THRESHOLD
-        and has_content_overlap(text, passage["text"])
     ]
-    if not supported:
-        return EVIDENCE_MESSAGE
-    context = format_context(supported)
-    generated = generate_from_evidence(text, context)
-    if generated == TECHNICAL_MESSAGE:
-        return TECHNICAL_MESSAGE
-    validated = validate_answer(generated, supported, context)
-    if validated is None:
-        return EVIDENCE_MESSAGE
-    return validated
+    if supported:
+        context = format_context(supported)
+        generated = generate_from_evidence(text, context)
+        validated = None if generated == TECHNICAL_MESSAGE else validate_answer(
+            generated, supported, context
+        )
+        if validated:
+            return validated
+        return answer_from_passages(supported)
+    return generate_outside_documents(text)

@@ -2,6 +2,7 @@ streamlit
 chromadb
 sentence-transformers
 pymupdf
+rapidocr-onnxruntime
 python-docx
 python-dotenv
 openai

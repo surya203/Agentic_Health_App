@@ -1,4 +1,4 @@
-"""Read and write the hospital profile and chat transcript in Supabase."""
+"""Read and write the hospital profile, documents, and chat transcript in Supabase."""
 
 from __future__ import annotations
 
@@ -138,5 +138,51 @@ def save_chat_message(role: str, content: str) -> None:
         ).execute()
 
     _run(operation)
+
+
+def upload_documents(paths: list[Path]) -> int:
+    """Replace the stored files with the current documents folder."""
+
+    def operation(client):
+        try:
+            client.storage.create_bucket("documents", options={"public": False})
+        except Exception:
+            pass
+        bucket = client.storage.from_("documents")
+        for path in paths:
+            bucket.upload(
+                path.name,
+                path.read_bytes(),
+                file_options={"upsert": "true"},
+            )
+        return len(paths)
+
+    return _run(operation)
+
+
+def replace_document_chunks(records: list[dict]) -> int:
+    """Replace stored document text with the current files."""
+
+    rows = []
+    for record in records:
+        metadata = record.get("metadata") or {}
+        rows.append(
+            {
+                "id": record["id"],
+                "source": str(metadata.get("source") or ""),
+                "page": int(metadata.get("page") or 0),
+                "content": record.get("text") or "",
+                "approval_status": str(metadata.get("approval_status") or ""),
+                "document_version": str(metadata.get("document_version") or ""),
+            }
+        )
+
+    def operation(client):
+        client.table("document_chunks").delete().neq("id", "").execute()
+        for start in range(0, len(rows), 15):
+            client.table("document_chunks").insert(rows[start : start + 15]).execute()
+        return len(rows)
+
+    return _run(operation)
 
 

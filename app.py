@@ -24,8 +24,9 @@ st.caption(
     "This tool does not diagnose or recommend treatment."
 )
 st.caption(
-    "Urgent symptoms are answered with a fixed safety message. "
-    "A question is sent to Groq, with the matching passages, only after local safety and evidence checks pass."
+    "Urgent symptoms get a fixed safety message. "
+    "Other questions are answered from the hospital profile keys and the loaded documents first. "
+    "The web is used only when those sources do not contain the answer."
 )
 
 
@@ -93,7 +94,7 @@ if st.session_state.supabase_notice:
     st.warning(st.session_state.supabase_notice)
 elif st.session_state.supabase_ready:
     st.caption(
-        "The hospital profile and this chat are stored in Supabase. "
+        "The hospital profile, indexed documents, and this chat are stored in Supabase. "
         "Do not enter personal health information."
     )
 
@@ -129,7 +130,7 @@ if question:
     with st.chat_message("user"):
         st.write(question)
     with st.chat_message("assistant"):
-        with st.spinner("Searching loaded documents..."):
+        with st.spinner("Checking the hospital profile and documents first..."):
             try:
                 answer = answer_question(question)
             except Exception:

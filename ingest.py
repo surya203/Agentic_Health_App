@@ -27,6 +27,7 @@ DEFAULT_APPROVAL = "sample-not-clinically-approved"
 DEFAULT_VERSION = "1.0"
 
 HEADING_RE = re.compile(r"^[A-Z][A-Za-z0-9 ,'/:\-]{2,80}$")
+_ocr_engine = None
 
 
 def read_txt(path: Path) -> str:
@@ -39,11 +40,33 @@ def read_txt(path: Path) -> str:
         return raw.decode("latin-1")
 
 
+def get_ocr_engine():
+    """Load the local OCR model once. Used when a PDF page is only an image."""
+    global _ocr_engine
+    if _ocr_engine is None:
+        from rapidocr_onnxruntime import RapidOCR
+
+        _ocr_engine = RapidOCR()
+    return _ocr_engine
+
+
+def ocr_page(page) -> str:
+    image = page.get_pixmap(dpi=150).tobytes("png")
+    result, _elapsed = get_ocr_engine()(image)
+    if not result:
+        return ""
+    lines = [str(item[1]).strip() for item in result if len(item) >= 2 and str(item[1]).strip()]
+    return "\n".join(lines).strip()
+
+
 def read_pdf(path: Path) -> list[tuple[int, str]]:
     pages: list[tuple[int, str]] = []
     with pymupdf.open(path) as document:
         for index, page in enumerate(document, start=1):
             text = page.get_text("text").strip()
+            if not text and page.get_images():
+                print(f"No text layer in {path.name} page {index}; running OCR...")
+                text = ocr_page(page)
             if text:
                 pages.append((index, text))
     return pages
@@ -268,6 +291,36 @@ def main() -> int:
         embeddings=vectors.tolist(),
     )
     print(f"Collection {COLLECTION_NAME} now has {collection.count()} chunk(s).")
+    from supabase_store import (
+        SupabaseStoreError,
+        configured,
+        replace_document_chunks,
+        upload_documents,
+    )
+
+    if configured():
+        files = [
+            path
+            for path in sorted(DOCUMENTS_DIR.iterdir())
+            if path.is_file()
+            and not path.name.startswith("~$")
+            and path.suffix.lower() in ALLOWED_SUFFIXES
+        ]
+        try:
+            uploaded = upload_documents(files)
+        except SupabaseStoreError as exc:
+            print(str(exc))
+            return 1
+        print(f"Supabase storage bucket documents now has {uploaded} file(s).")
+        try:
+            stored = replace_document_chunks(records)
+        except SupabaseStoreError as exc:
+            print(str(exc))
+            print("The files are in Supabase Storage. Run sql/schema.sql to store the extracted text too.")
+            return 1
+        print(f"Supabase document_chunks now has {stored} chunk(s).")
+    else:
+        print("Supabase is not configured, so documents were not stored there.")
     if failures:
         print("Files that could not be parsed: " + ", ".join(failures))
         return 1

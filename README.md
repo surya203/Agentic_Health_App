@@ -1,17 +1,18 @@
 # Cancer Awareness Assistant
 
-Local engineering prototype. It searches PDF, DOCX, and TXT files with a local embedding model and Chroma, then asks Groq to draft an answer only when Python safety and evidence checks pass.
+Local engineering prototype. It searches PDF, DOCX, and TXT files with a local embedding model and Chroma. Groq answers from those files when they contain the evidence. When they do not, Groq can search the web and still give a general answer.
 
 This is not a diagnostic system and it is not a clinically validated product. The files in `documents/` are synthetic samples. They are not hospital-approved clinical content.
 
 ## What it does
 
-- Answers from retrieved passages and shows source citations.
-- Refuses when the indexed documents do not support an answer, without asking Groq to invent one.
-- Refuses to diagnose cancer, rule cancer out, or recommend treatment.
+- Answers hospital profile keys (name, phone, colors, fonts, and the other stored fields) from the database before anything else.
+- Answers other questions from retrieved document passages and shows source citations.
+- Searches the web only when neither the database keys nor the files contain the answer, and labels that reply as not from the hospital documents.
+- Refuses to diagnose cancer, rule cancer out, or recommend a personal treatment.
 - Returns a fixed urgent-care message for selected emergency phrases before retrieval.
 
-Questions and matching passages are sent to Groq only after those checks pass. Do not type personal or identifiable health information.
+Questions may be sent to Groq with matching passages, or with a web search when the files do not contain the answer. Do not type personal or identifiable health information.
 
 ## Setup (Windows)
 
@@ -41,9 +42,11 @@ SUPABASE_KEY=your_supabase_key
 
 ## Supabase
 
-The app stores two kinds of values:
+The app stores three kinds of values:
 
 - One hospital profile row (name, address, phone, email, website, logo, colors, and fonts from `documents/hospital.txt`).
+- The current files in `documents/`, uploaded to the private Storage bucket `documents` whenever `python ingest.py` runs.
+- The extracted text of those files in `document_chunks`, replaced on the same run after `sql/schema.sql` has been applied.
 - Each chat question and answer.
 
 In the Supabase dashboard, open the SQL editor and run [sql/schema.sql](sql/schema.sql). Restart the app after the URL and key are in `.env`. The first successful launch inserts the hospital profile when that table is empty, then saves new chat turns and reloads the latest 50 messages.
@@ -77,7 +80,7 @@ Re-run `python ingest.py` after documents change. That rebuilds `chroma_db/`. `p
 ## Sample checks
 
 - A question the samples support, such as persistent hoarseness or who chooses a screening test, should cite the sample filename.
-- A question absent from the samples, such as a clinic parking permit, should be refused without a generated medical answer.
+- A question absent from the samples, such as what machine learning is, should still receive an answer labeled as not from the hospital documents.
 - "Do I have cancer?" should be refused.
 - A message about chest pain and trouble breathing should return the urgent-care message.
 
