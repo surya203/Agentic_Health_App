@@ -5,7 +5,7 @@ import re
 
 import streamlit as st
 
-from rag import TECHNICAL_MESSAGE, answer_question
+from rag import TECHNICAL_MESSAGE, answer_question, transcribe_speech
 from supabase_store import (
     NOT_CONFIGURED,
     SupabaseStoreError,
@@ -123,8 +123,11 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
 
-question = st.chat_input("Ask an educational question")
-if question:
+
+def ask(question: str) -> None:
+    question = question.strip()
+    if not question:
+        return
     st.session_state.messages.append({"role": "user", "content": question})
     persist_message("user", question)
     with st.chat_message("user"):
@@ -138,3 +141,34 @@ if question:
         st.write(answer)
     st.session_state.messages.append({"role": "assistant", "content": answer})
     persist_message("assistant", answer)
+
+
+audio = st.audio_input("Speak a question")
+if audio is not None:
+    signature = (getattr(audio, "file_id", None), audio.size)
+    if signature != st.session_state.get("voice_signature"):
+        st.session_state.voice_signature = signature
+        with st.spinner("Transcribing your question..."):
+            try:
+                spoken = transcribe_speech(audio.getvalue(), audio.name or "speech.wav")
+            except Exception:
+                spoken = None
+        if spoken:
+            st.session_state.voice_error = None
+            ask(spoken)
+        elif spoken == "":
+            st.session_state.voice_error = (
+                "No speech was detected. Try again or type the question."
+            )
+        else:
+            st.session_state.voice_error = (
+                "The recording could not be transcribed. Try again or type the question."
+            )
+
+if voice_error := st.session_state.get("voice_error"):
+    st.warning(voice_error)
+
+question = st.chat_input("Ask an educational question")
+if question:
+    st.session_state.voice_error = None
+    ask(question)

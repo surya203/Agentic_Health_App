@@ -23,6 +23,7 @@ TOP_K = 6
 SIMILARITY_THRESHOLD = 0.62
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 DEFAULT_MODEL = "openai/gpt-oss-120b"
+WHISPER_MODEL = "whisper-large-v3-turbo"
 
 URGENT_MESSAGE = (
     "This may need urgent medical care. Contact emergency services or a clinician now. "
@@ -303,6 +304,31 @@ def _groq_client() -> tuple[OpenAI | None, str]:
         return None, model
     client = OpenAI(api_key=api_key, base_url=GROQ_BASE_URL, timeout=60.0, max_retries=0)
     return client, model
+
+
+def _audio_upload(audio: bytes, filename: str) -> tuple[str, bytes, str]:
+    if audio[:4] == b"RIFF":
+        return "speech.wav", audio, "audio/wav"
+    if audio[:4] == b"OggS":
+        return "speech.ogg", audio, "audio/ogg"
+    if filename.lower().endswith(".webm") or audio[:4] == b"\x1aE\xdf\xa3":
+        return "speech.webm", audio, "audio/webm"
+    return "speech.wav", audio, "audio/wav"
+
+
+def transcribe_speech(audio: bytes, filename: str = "speech.wav") -> str:
+    """Turn a microphone recording into the question text."""
+    client, _model = _groq_client()
+    if client is None or not audio:
+        return ""
+    name, payload, media_type = _audio_upload(audio, filename)
+    transcript = client.audio.transcriptions.create(
+        model=WHISPER_MODEL,
+        file=(name, payload, media_type),
+        language="en",
+    )
+    text = getattr(transcript, "text", transcript)
+    return str(text or "").strip()
 
 
 def generate_from_evidence(question: str, context: str) -> str:
